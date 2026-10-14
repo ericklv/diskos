@@ -2905,6 +2905,7 @@ static void some_np(const np_parts_t *p){ np_sides_on_cover(p, 0); }   /* times 
 static int g_some_smc = -1;
 static void some_saver_clock(const char *t){ if(g_some_smc == 0) mclock_set(1, t); }
 static void some_saver(const saver_parts_t *p){
+    if(p->date) lv_obj_set_style_text_font(p->date, TF(HEADER), 0);   /* a big dot-matrix date (28 px), not the 16 px UI face */
     int song_y = saver_song_y(p->date, p->style == 1 ? 278 : 260);
     lv_obj_set_style_text_font(p->track, TF(DATE), 0);
     lv_obj_set_style_text_font(p->artist, TF(UI_16), 0);
@@ -2925,7 +2926,7 @@ static void some_saver(const saver_parts_t *p){
     if(!shown) return;
     lv_obj_add_flag(p->clock, LV_OBJ_FLAG_HIDDEN);
     if(p->date){ lv_obj_align(p->date, LV_ALIGN_TOP_MID, 0, y + 63 + 12); lv_obj_update_layout(p->date); }
-    if(p->weather && p->date) lv_obj_align(p->weather, LV_ALIGN_TOP_MID, 0, lv_obj_get_y(p->date) + 28);
+    if(p->weather && p->date) lv_obj_align(p->weather, LV_ALIGN_TOP_MID, 0, lv_obj_get_y(p->date) + lv_obj_get_height(p->date) + 4);
 }
 const theme_kit_t theme_kit_something = { .id = "something", .style = some_style, .nowplaying = some_np,
                                           .empty_state = some_empty, .np_cover_state = some_cover,
