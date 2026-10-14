@@ -11,7 +11,10 @@
 #include <pthread.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdlib.h>
 #include <time.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 LV_FONT_DECLARE(font_weather16)
 static lv_font_t s_appwfont;   /* montserrat_22 + weather-icon fallback */
@@ -29,6 +32,11 @@ static lv_font_t s_appwfont;   /* montserrat_22 + weather-icon fallback */
 #define WI_SNOW  "\xEF\x8B\x9C"   /* f2dc snowflake-o*/
 
 static char g_wbuf[160];
+static char g_wzone[96];              /* the zone wttr.in resolved (its %l field), guarded like g_wbuf */
+/* The last good reading survives a reboot for the rest of its day: one success is enough to show weather all day,
+ * while the background fetch keeps refreshing it. Lines: YYYYMMDD / zone / display text. */
+#define WX_CACHE     "/usr/data/weather.cache"
+#define WX_CACHE_TMP "/usr/data/weather.cache.tmp"
 static char g_loc[160];               /* percent-encoded location (set on main thread).
                                        * config VLEN caps weather_loc at ~47 bytes raw, so
                                        * worst-case %-encoding (47*3=141) fits with margin. */
@@ -141,6 +149,7 @@ static void *weather_thread(void *arg)
 {
     (void)arg;
     int fail = 1;    /* result of this fetch, published under the lock at the end */
+    char zone_out[96] = {0};  /* the resolved zone, published with result */
     char result[160] = {0};   /* built here; copied into g_wbuf UNDER the lock at publish (no torn reads) */
     char line[256] = {0};
     struct wx_res res = {0, WXI_NONE, 0, 0};
@@ -153,13 +162,17 @@ static void *weather_thread(void *arg)
     if (f) { if (!fgets(line, sizeof line, f)) line[0] = 0; pclose(f); }
     else fprintf(stderr, "weather popen failed: %s\n", strerror(errno));
     if (line[0] && strchr(line, '~')) {
-        char temp[32] = {0}, cond[128] = {0};
+        char temp[32] = {0}, cond[128] = {0}, zone[96] = {0};
         char *t1 = strchr(line, '~');
         int tl = t1 - line; if (tl > 31) tl = 31;
         memcpy(temp, line, tl); temp[tl] = 0;
         char *c = t1 + 1;
         char *t2 = strchr(c, '~');
         int full = t2 ? (int)(t2 - c) : (int)strlen(c);
+        if (t2) {                                    /* the zone: the third field, without the line end */
+            int zl = (int)strcspn(t2 + 1, "\r\n"); if (zl > 95) zl = 95;
+            memcpy(zone, t2 + 1, zl); zone[zl] = 0;
+        }
         while (full > 0 && (c[full-1] == '\n' || c[full-1] == '\r')) full--;
         /* lowercase the full condition phrase for icon matching */
         char low[128]; int li = 0;
@@ -186,16 +199,58 @@ static void *weather_thread(void *arg)
         { size_t n = strlen(result);                    /* the service can pad the condition: trailing blanks would
                                                          * count in the centred label's width and push it off centre */
           while(n && (result[n - 1] == ' ' || result[n - 1] == '\t' || result[n - 1] == '\r' || result[n - 1] == '\n')) result[--n] = 0; }
+        memcpy(zone_out, zone, sizeof zone_out);
         fail = 0;
     }
     if (fail) fprintf(stderr, "weather: no usable data (resp='%.48s')\n", line);
     /* publish atomically: the lock release/acquire pairs with weather_poll so the
      * g_wbuf writes above are guaranteed visible once it observes g_wready. */
     pthread_mutex_lock(&g_wx_mu);
-    if (!fail) { memcpy(g_wbuf, result, sizeof g_wbuf); g_wres = res; }   /* g_wbuf written ONLY under the lock */
+    if (!fail) { memcpy(g_wbuf, result, sizeof g_wbuf); memcpy(g_wzone, zone_out, sizeof g_wzone); g_wres = res; }   /* written ONLY under the lock */
     g_wfail = fail; g_wready = 1; g_inflight = 0;
     pthread_mutex_unlock(&g_wx_mu);
     return NULL;
+}
+
+static int wx_today(void)
+{
+    time_t now = time(NULL); struct tm lt; localtime_r(&now, &lt);
+    return (lt.tm_year + 1900) * 10000 + (lt.tm_mon + 1) * 100 + lt.tm_mday;
+}
+/* main thread, after a successful fetch: atomic + durable, and only when the day, zone or text changed */
+static void wx_cache_save(void)
+{
+    static int s_day; static char s_zone[96], s_text[160];
+    char zone[96], text[160]; int day = wx_today();
+    pthread_mutex_lock(&g_wx_mu);
+    memcpy(zone, g_wzone, sizeof zone); memcpy(text, g_wbuf, sizeof text);
+    pthread_mutex_unlock(&g_wx_mu);
+    if (day == s_day && !strcmp(zone, s_zone) && !strcmp(text, s_text)) return;
+    FILE *f = fopen(WX_CACHE_TMP, "w"); if (!f) return;
+    int ok = fprintf(f, "%d\n%s\n%s\n", day, zone, text) > 0;
+    if (ok && (fflush(f) != 0 || fsync(fileno(f)) != 0)) ok = 0;
+    if (fclose(f) != 0) ok = 0;
+    if (!ok || rename(WX_CACHE_TMP, WX_CACHE) != 0) { unlink(WX_CACHE_TMP); return; }
+    int dfd = open("/usr/data", O_RDONLY | O_DIRECTORY); if (dfd >= 0) { fsync(dfd); close(dfd); }
+    s_day = day; memcpy(s_zone, zone, sizeof s_zone); memcpy(s_text, text, sizeof s_text);
+}
+/* main thread, once: today's cached reading is shown at once; the fetch still runs right away to refresh it */
+static void wx_cache_load(void)
+{
+    FILE *f = fopen(WX_CACHE, "r"); if (!f) return;
+    char day[16] = "", zone[96] = "", text[160] = "";
+    int ok = fgets(day, sizeof day, f) && fgets(zone, sizeof zone, f) && fgets(text, sizeof text, f);
+    fclose(f);
+    if (!ok || atoi(day) != wx_today()) return;
+    zone[strcspn(zone, "\r\n")] = 0; text[strcspn(text, "\r\n")] = 0;
+    if (!text[0]) return;
+    pthread_mutex_lock(&g_wx_mu);
+    memcpy(g_wbuf, text, sizeof g_wbuf); memcpy(g_wzone, zone, sizeof g_wzone);
+    pthread_mutex_unlock(&g_wx_mu);
+    g_have = 1;
+    g_wwant = 1;
+    home_set_weather(g_wbuf);
+    saver_set_weather(g_wbuf);
 }
 
 /* Start a fetch when connectivity is known and the slot is free. A result not yet
@@ -299,6 +354,8 @@ void weather_poll(lv_timer_t *t)
         pthread_mutex_unlock(&g_wx_mu);
         return;
     }
+    static int cache_loaded;
+    if (!cache_loaded) { cache_loaded = 1; wx_cache_load(); }
     int ready = 0, fail = 0, inflight;
     struct wx_res rr = {0, WXI_NONE, 0, 0};
     pthread_mutex_lock(&g_wx_mu);
@@ -317,6 +374,7 @@ void weather_poll(lv_timer_t *t)
             if (rr.ok) wx_snap_accept(rr.icon, rr.temp, rr.unit);   /* stamped now, at acceptance */
             home_set_weather(g_wbuf);
             saver_set_weather(g_wbuf);
+            wx_cache_save();
         } else if (g_wjobnet > 0 && !g_have) {   /* connected failure: 20s, doubling to 10 min */
             g_wback = g_wback ? g_wback * 2 : 20000u;
             if (g_wback > 600000u) g_wback = 600000u;
@@ -349,8 +407,12 @@ static void weather_app_refresh(void)
     }
     if (g_app_loc) {
         const char *l = cfg_get_str("weather_loc", "");
-        char b[128];
-        snprintf(b, sizeof b, "Location:  %s", (l && l[0]) ? l : "Auto (by IP)");
+        char zone[96], b[224];
+        pthread_mutex_lock(&g_wx_mu);
+        memcpy(zone, g_wzone, sizeof zone);
+        pthread_mutex_unlock(&g_wx_mu);
+        if (!l || !l[0]) snprintf(b, sizeof b, "Location:  Auto (by IP)%s%s", zone[0] ? " - " : "", zone);
+        else             snprintf(b, sizeof b, "Location:  %s", zone[0] ? zone : l);
         lv_label_set_text(g_app_loc, b);
     }
 }
@@ -403,6 +465,10 @@ static void loc_done(const char *text)
     if(!text) return;           /* Cancel: change nothing */
     if(strlen(text) > 47){ ui_toast("Place too long"); return; }
     cfg_set_str("weather_loc", text);   /* empty Save clears to Auto */
+    unlink(WX_CACHE);           /* the cached reading is for the old zone */
+    pthread_mutex_lock(&g_wx_mu);
+    g_wzone[0] = 0;
+    pthread_mutex_unlock(&g_wx_mu);
     g_wgen++;                   /* invalidate any in-flight fetch for the old location */
     g_have = 0;                 /* force a fresh fetch + show "Fetching" */
     wx_snap_invalidate();       /* a reading for the old location is never kept */
