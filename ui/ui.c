@@ -574,10 +574,19 @@ static void cover_click_cb(lv_event_t *e)
     if(code == LV_EVENT_PRESSED) {
         if(id){ lv_point_t p; lv_indev_get_point(id, &p); g_cover_px = p.x; g_cover_py = p.y; }
     }
-    /* Cover-tap no longer opens full-screen art (removed per product decision - the
-     * vinyl screensaver is the album-art showcase; full-screen art stays available via
-     * Options -> Full-screen Art). The PRESSED tracking above + main.c's cover-tap
-     * seek-skip remain so a tap on the cover can't accidentally seek. */
+    /* A DOUBLE TAP on the cover opens Lyrics (full-screen art stays under Options -> Full-screen Art).
+     * A slide that started on the cover still fires CLICKED, so only a near-still release counts as a
+     * tap; main.c's cover-tap seek-skip keeps either tap from seeking. */
+    else if(code == LV_EVENT_CLICKED && id) {
+        static uint32_t last_tap;          /* 0 = no first tap pending */
+        lv_point_t p; lv_indev_get_point(id, &p);
+        int dx = p.x - g_cover_px, dy = p.y - g_cover_py;
+        if(dx < 0) dx = -dx;
+        if(dy < 0) dy = -dy;
+        if(dx >= 20 || dy >= 20) { last_tap = 0; return; }
+        if(last_tap && lv_tick_elaps(last_tap) < 400) { last_tap = 0; lyrics_open(); }
+        else last_tap = lv_tick_get() | 1;  /* |1: never 0, even at tick 0 */
+    }
 }
 static void make_clickable(lv_obj_t *o, const char *cmd)
 {
@@ -2109,9 +2118,9 @@ void ui_create(lv_obj_t *root)
     lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(cover, 0, LV_PART_MAIN);
     lv_obj_clear_flag(cover, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(cover, LV_OBJ_FLAG_CLICKABLE);   /* tap art -> Song Info */
+    lv_obj_add_flag(cover, LV_OBJ_FLAG_CLICKABLE);   /* double-tap art -> Lyrics */
     lv_obj_add_event_cb(cover, cover_click_cb, LV_EVENT_PRESSED, NULL);
-    ui_on(cover, cover_click_cb, LV_EVENT_CLICKED, NULL, "ui.cover", UI_DECORATIVE);   /* tap only guards against a seek */
+    ui_on(cover, cover_click_cb, LV_EVENT_CLICKED, NULL, "ui.cover", UI_DECORATIVE);   /* double tap opens Lyrics */
 
     cover_img = lv_image_create(cover);
     lv_obj_set_size(cover_img, COVER_D, COVER_D);
