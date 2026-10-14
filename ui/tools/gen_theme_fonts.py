@@ -21,7 +21,7 @@ DOT = '0x20-0x7E,0xA0-0xFF'
 
 # theme -> [(face, source file, {axis: value} or None, sizes, range)]
 FONTS = {
-    'dot': [('', 'something/Doto-w700.ttf', None, (18, 28), DOT)],
+    'dot': [('', 'something/Doto-w700.ttf', None, (18, 22, 28), DOT)],
     'hifi': [('ui', 'concepts/Inter-VF.ttf', {'wght': 600}, (12, 14, 16, 18, 20, 24), TEXT),
              ('seg', 'concepts/DSEG7Classic-Bold.ttf', None, (20, 64), CLOCK)],
     'term': [('ui', 'concepts/JetBrainsMono-VF.ttf', {'wght': 500}, (12, 14, 16, 18, 20, 24), TEXT),
