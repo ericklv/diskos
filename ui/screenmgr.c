@@ -269,6 +269,16 @@ void screen_back(void)
     transition(from, prev, -1);
 }
 
+/* Jump straight to Home from anywhere (swipe up from the bottom edge): clears the nav stack, pop animation. */
+void screen_home(void)
+{
+    if (s_current == SCR_HOME) return;
+    int from = s_current;
+    s_sp = 0;
+    s_current = SCR_HOME;
+    transition(from, SCR_HOME, -1);
+}
+
 lv_obj_t *screen_get_root(int which)
 {
     if (which < 0 || which >= SCR_COUNT) return NULL;

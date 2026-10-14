@@ -9,6 +9,7 @@ enum { SCR_HOME, SCR_LIBRARY, SCR_NOWPLAYING, SCR_SETTINGS, SCR_SETTING_DETAIL, 
 void screens_init(void);
 void screen_show(int which);
 void screen_back(void);
+void screen_home(void);
 void screen_set_anim(int on);
 int  screen_current(void);
 void ui_toast(const char *msg);

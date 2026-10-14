@@ -103,6 +103,7 @@ static int         g_dbg = 0;          /* show tap dot (only if /usr/data/touch_
  * rightwards), so a horizontal swipe on the right side never goes back. */
 #define BACK_START_MAX_X 64    /* back-swipe must START near the left edge (iOS-style) so it
                                 * doesn't fight horizontal drift during a vertical list scroll */
+#define HOME_EDGE_MIN_Y 320   /* swipe-up-to-Home must START at the bottom edge (mirror of the top pull-down) */
 /* On Now Playing the seek ring fills the screen, so a seek can start anywhere.
  * A navigation swipe (back / hub) is told apart from a seek by being a LONG,
  * STRAIGHT, horizontal slide - a seek drag follows the ring's curve, so it is
@@ -3676,6 +3677,10 @@ int main(int argc, char **argv){
                               vert && dy>0 && dy>=g_swipe_thresh && dt<700){
                         screen_show(SCR_QUICK);              /* pull down from top edge */
                         quicksettings_refresh(playing);
+                    } else if(cur!=SCR_HOME && cur!=SCR_SAVER && cur!=SCR_QUICK && sy>=HOME_EDGE_MIN_Y &&
+                              vert && dy<0 && ady>=g_swipe_thresh && dt<700){
+                        if(cur==SCR_ALBUMWALL) albumwall_drag_cancel();
+                        screen_home();                       /* swipe up from the bottom edge = Home */
                     } else if(cur==SCR_NOWPLAYING){
                         /* On Now Playing a nav swipe must be a LONG, STRAIGHT,
                          * horizontal slide (so it's not confused with a seek drag

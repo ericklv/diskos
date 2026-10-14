@@ -17,7 +17,7 @@ diskOS is a touch interface for the FiiO Snowsky Disc's 360x360 screen. It uses 
 
 ### Home
 
-Home shows the time, date, battery, current song, and a weather glance when weather is enabled. Tap Library to browse music, Search to find a song, the play button to pause or resume, or the current song to open Now Playing. In halo, the now-playing island's border shows playback progress. Tap the weather glance, including "Weather unavailable", to open Weather. Swipe left to Apps, swipe down from the top edge for Quick Settings, or use the left-edge right swipe to go back from other screens.
+Home shows the time, date, battery, current song, and a weather glance when weather is enabled. Tap Library to browse music, Search to find a song, the play button to pause or resume, or the current song to open Now Playing. In halo, the now-playing island's border shows playback progress. Tap the weather glance, including "Weather unavailable", to open Weather. Swipe left to Apps, swipe down from the top edge for Quick Settings, use the left-edge right swipe to go back from other screens, or swipe up from the bottom edge to return straight to Home.
 
 <table>
 <tr>
