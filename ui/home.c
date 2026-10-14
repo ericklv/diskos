@@ -40,9 +40,7 @@ static lv_obj_t *g_np_state;
  * (handle 0) and the screensaver's (handle 1); each has its own canvas, buffer and AM/PM label. */
 typedef struct { lv_obj_t *canvas, *ampm, *colon[2]; uint8_t *buf; int y; int drawn; char time[16]; } mclock_t;   /* time: drawn text */
 static mclock_t g_mc[2];
-static lv_timer_t *g_mc_blink;
-static int g_mc_phase = 1;
-static int g_mc_active = -1;
+static int g_mc_phase = 1;   /* colon on; only the host test hook turns it off */
 #define g_mclock (g_mc[0].canvas)
 #define MC_CELL 9      /* 7 px block + 2 px gap */
 #define MC_W   360     /* the full screen width, so the time is centred on the screen itself */
@@ -94,37 +92,12 @@ static void mc_draw(mclock_t *m, const char *t, int ampm_w, int *ampm_x){
     }
     lv_obj_invalidate(m->canvas);
 }
-static void mc_blink_cb(lv_timer_t *timer){
-    int h = screen_current() == SCR_HOME ? 0 : screen_current() == SCR_SAVER ? 1 : -1;
-    if(h != g_mc_active || h < 0 || !g_mc[h].canvas || lv_obj_has_flag(g_mc[h].canvas, LV_OBJ_FLAG_HIDDEN)){
-        lv_timer_pause(timer);
-        g_mc_active = -1;
-        return;
-    }
-    g_mc_phase = !g_mc_phase;
-    for(int k = 0; k < 2; k++){
-        if(g_mc_phase) lv_obj_remove_flag(g_mc[h].colon[k], LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(g_mc[h].colon[k], LV_OBJ_FLAG_HIDDEN);
-    }
-}
-/* Called after navigation and backlight changes, before the next timer pass. */
+/* Called after navigation and backlight changes. The colon is steady (no blink): just make sure the current screen's
+ * colon is showing. */
 void mclock_sync(int backlight_on){
     int h = screen_current() == SCR_HOME ? 0 : screen_current() == SCR_SAVER ? 1 : -1;
-    if(!backlight_on || h < 0 || !g_mc[h].canvas ||
-       lv_obj_has_flag(g_mc[h].canvas, LV_OBJ_FLAG_HIDDEN)) h = -1;
-    if(h < 0){
-        if(g_mc_blink) lv_timer_pause(g_mc_blink);
-        g_mc_active = -1;
-        return;
-    }
-    if(h == g_mc_active && g_mc_blink && !lv_timer_get_paused(g_mc_blink)) return;
-    g_mc_active = h;
-    g_mc_phase = 1;
+    if(!backlight_on || h < 0 || !g_mc[h].canvas || lv_obj_has_flag(g_mc[h].canvas, LV_OBJ_FLAG_HIDDEN)) return;
     for(int k = 0; k < 2; k++) lv_obj_remove_flag(g_mc[h].colon[k], LV_OBJ_FLAG_HIDDEN);
-    if(g_mc_blink){
-        lv_timer_reset(g_mc_blink);
-        lv_timer_resume(g_mc_blink);
-    }
 }
 static void mc_colon_new(mclock_t *m, lv_obj_t *parent){
     static const uint8_t xy[5][2] = {{1,0},{0,1},{1,1},{2,1},{1,2}};
@@ -156,10 +129,6 @@ int mclock_new(int h, lv_obj_t *parent, int y){
     lv_obj_set_pos(m->canvas, 0, y);
     m->y = y;
     mc_colon_new(m, parent);
-    if(!g_mc_blink){
-        g_mc_blink = lv_timer_create(mc_blink_cb, 500, NULL);
-        if(g_mc_blink) lv_timer_pause(g_mc_blink);
-    }
     m->ampm = lv_label_create(parent);
     lv_label_set_text(m->ampm, "");
     lv_obj_set_style_text_font(m->ampm, TF(UI_12), 0);
@@ -198,7 +167,7 @@ void mclock_place(int h, int y, int shown){
     else     { lv_obj_add_flag(m->canvas, LV_OBJ_FLAG_HIDDEN);    lv_obj_add_flag(m->ampm, LV_OBJ_FLAG_HIDDEN); }
 }
 #ifdef DISKOS_HOST
-int mclock_host_timer_paused(void){ return !g_mc_blink || lv_timer_get_paused(g_mc_blink); }
+int mclock_host_timer_paused(void){ return 1; }   /* no blink timer: the colon is steady */
 int mclock_host_phase_get(void){ return g_mc_phase; }
 void mclock_host_phase(int on){
     g_mc_phase = !!on;

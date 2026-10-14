@@ -300,7 +300,7 @@ Chinese, Japanese, and Korean names and titles use the stock font fallback acros
 | Theme | What changes |
 |---|---|
 | halo | Rounded controls, a cover-centered Now Playing view, a large Home clock, and Home border progress. |
-| something | Dot-matrix clock and titles, blinking colon, dot arrows, and a dotted progress ring. |
+| something | Dot-matrix clock and titles, steady accent colon, dot arrows, and a dotted progress ring. |
 | hi-fi | Faceplate rows with amber press lights, a segmented clock, and bezel-tick progress. |
 | terminal | Monospace readouts, blinking header cursor, aligned playlist durations, a highlighted Now Playing label in Up Next, and a straight seek bar. |
 | bauhaus | Bold capitals, geometric row bullets with press feedback, artwork in the left half of Now Playing, and a separate queue-position line. |
