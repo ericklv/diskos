@@ -14,6 +14,7 @@ int ui_label_input_changed(lv_obj_t *obj, const char *txt);   /* ui.c: a label's
 int ui_label_set_changed(lv_obj_t *obj, const char *txt);
 
 LV_FONT_DECLARE(font_weather16)
+LV_FONT_DECLARE(diskos_dot_22)
 static lv_font_t s_wfont;   /* montserrat_14 with the weather-icon font as fallback */
 
 
@@ -60,13 +61,14 @@ static void mc_block(uint8_t *buf, int px, int cy, uint32_t rgb){   /* a block a
 static void mc_draw(mclock_t *m, const char *t, int ampm_w, int *ampm_x){
     if(!m->canvas || !m->buf) return;
     uint8_t *buf = m->buf;
+    const int cell = MC_CELL;
     int d[4], n = 0;
     for(const char *c = t; *c && n < 4; c++) if(*c >= '0' && *c <= '9') d[n++] = *c - '0';
     memset(buf, 0, MC_W * MC_H * 4);
     if(n >= 3){
         int hd = n - 2;
-        /* each digit is 5 blocks + 1 gap, the colon 3 blocks + 1 gap; the last digit has no trailing gap */
-        int width = (hd * 6 + 4 + 2 * 6 - 1) * MC_CELL - 2;
+        /* each digit is 5 blocks + 1 gap, the colon 1 block + 1 gap; the last digit has no trailing gap */
+        int width = (hd * 6 + 2 + 2 * 6 - 1) * cell - 2;
         /* centre what is LIT, not the cell box: a "1" leaves its outer columns empty, which would push the time
          * off centre. lead/trail = empty columns at the far left of the first digit / far right of the last. */
         int lead = 5, trail = 5;
@@ -74,19 +76,19 @@ static void mc_draw(mclock_t *m, const char *t, int ampm_w, int *ampm_x){
             if(MC_DIGIT[d[0]][r] >> (4 - col) & 1){ if(col < lead) lead = col; }
             if(MC_DIGIT[d[n - 1]][r] >> (4 - col) & 1){ if(4 - col < trail) trail = 4 - col; }
         }
-        int ink = width - (lead + trail) * MC_CELL;
+        int ink = width - (lead + trail) * cell;
         int group = ink + (ampm_w > 0 ? 6 + ampm_w : 0);
-        int x = (MC_W - group) / 2 - lead * MC_CELL;
-        if(ampm_x) *ampm_x = x + width - trail * MC_CELL + 6;
+        int x = (MC_W - group) / 2 - lead * cell;
+        if(ampm_x) *ampm_x = x + width - trail * cell + 6;
         uint32_t fg = theme_rgb(THEME_CLR_TEXT_PRIMARY);
         for(int i = 0; i < n; i++){
-            if(i == hd){                               /* the colon: two accent plus signs, one row apart */
-                for(int k = 0; k < 2; k++) lv_obj_set_pos(m->colon[k], x, m->y + k * 4 * MC_CELL);
-                x += 4 * MC_CELL;
+            if(i == hd){                               /* the colon: two short accent bars, rows 1-2 and 4-5 */
+                for(int k = 0; k < 2; k++) lv_obj_set_pos(m->colon[k], x, m->y + (1 + k * 3) * cell);
+                x += 2 * cell;
             }
             for(int r = 0; r < 7; r++) for(int col = 0; col < 5; col++)
-                if(MC_DIGIT[d[i]][r] >> (4 - col) & 1) mc_block(buf, x + col * MC_CELL, r, fg);
-            x += 6 * MC_CELL;
+                if(MC_DIGIT[d[i]][r] >> (4 - col) & 1) mc_block(buf, x + col * cell, r, fg);
+            x += 6 * cell;
         }
     }
     lv_obj_invalidate(m->canvas);
@@ -107,18 +109,17 @@ void mclock_sync(int backlight_on){
     }
 }
 static void mc_colon_new(mclock_t *m, lv_obj_t *parent){
-    static const uint8_t xy[5][2] = {{1,0},{0,1},{1,1},{2,1},{1,2}};
-    for(int k = 0; k < 2; k++){
+    for(int k = 0; k < 2; k++){                        /* each half is a bar of two blocks */
         lv_obj_t *group = lv_obj_create(parent);
         lv_obj_remove_style_all(group);
-        lv_obj_set_size(group, 3 * MC_CELL, 3 * MC_CELL);
+        lv_obj_set_size(group, MC_CELL, 2 * MC_CELL);
         lv_obj_clear_flag(group, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         m->colon[k] = group;
-        for(int i = 0; i < 5; i++){
+        for(int i = 0; i < 2; i++){
             lv_obj_t *dot = lv_obj_create(group);
             lv_obj_remove_style_all(dot);
             lv_obj_set_size(dot, MC_CELL - 2, MC_CELL - 2);
-            lv_obj_set_pos(dot, xy[i][0] * MC_CELL, xy[i][1] * MC_CELL);
+            lv_obj_set_pos(dot, 0, i * MC_CELL);
             lv_obj_set_style_bg_color(dot, TC(ACCENT_PRIMARY), 0);
             lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
             lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -306,6 +307,88 @@ void home_set_settings_click_cb(home_settings_click_cb_t cb)
     g_settings_cb = cb;
 }
 
+/* something: the date and the weather share one centred dot-matrix line under the clock */
+#define SOME_LINE_Y 124
+#define SOME_LINE_W 330   /* the round screen's width across that line, less a margin */
+#define SOME_SEP_GAP 8
+static lv_font_t s_ddot, s_wdot, s_wicon;   /* Doto 22: the date (+ intl/CJK), the weather (+ icon, then intl/CJK) */
+static lv_obj_t *g_ssep;   /* the "/" between the date and the weather */
+static void some_dateline(void){
+    if(!g_mclock || !g_clock_sub || !g_weather || !g_ssep) return;
+    lv_point_t d, sp, w;
+    const lv_font_t *df = lv_obj_get_style_text_font(g_clock_sub, 0);
+    lv_text_get_size(&d, lv_label_get_text(g_clock_sub), df, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&sp, "/", df, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    /* the weather gets what the date leaves: home_set_weather reads this width to drop the icon before the words */
+    int room = SOME_LINE_W - d.x - sp.x - 2 * SOME_SEP_GAP;
+    lv_obj_set_width(g_weather, room);
+    const char *wt = lv_label_get_text(g_weather);
+    int ww = 0;
+    if(wt[0]){
+        lv_text_get_size(&w, wt, &s_wdot, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        ww = w.x < room ? w.x : room;
+    }
+    int mid = ww ? sp.x + 2 * SOME_SEP_GAP : 0;
+    int x = (360 - d.x - mid - ww) / 2;
+    lv_obj_set_pos(g_clock_sub, x, SOME_LINE_Y);
+    if(ww){
+        lv_obj_remove_flag(g_ssep, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_pos(g_ssep, x + d.x + SOME_SEP_GAP, SOME_LINE_Y);
+    } else lv_obj_add_flag(g_ssep, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(g_weather, x + d.x + mid, SOME_LINE_Y + (lv_font_get_line_height(df) - lv_font_get_line_height(&s_wdot)) / 2);
+}
+
+/* something: wifi / bt / battery drawn as 7-row dot bitmaps (2 px dots, 3 px pitch), the percent in 6-row digits */
+#define SD_PITCH 3
+#define SD_W     (54 * SD_PITCH)   /* wifi 9 + bt 5 + battery 12 + "100%" 19 cells, three 3-cell gaps */
+#define SD_H     (7 * SD_PITCH)
+#define SOME_STATUS_Y 158
+static lv_obj_t *g_sdots;
+static uint8_t g_sdots_buf[SD_W * SD_H * 4];
+static const char *const SD_WIFI[7] = { "..11111..", ".1.....1.", "1..111..1", "..1...1..", ".........", "....1....", "........." };
+static const char *const SD_BT[7]   = { "..11.", "1.1.1", ".111.", "..1..", ".111.", "1.1.1", "..11." };
+static const char *const SD_BOLT[7] = { "...1.", "..11.", ".11..", "11111", "..11.", ".11..", ".1..." };
+static const char *const SD_DIG6[11][6] = {   /* 0-9 and %, 4x6 */
+    { ".11.", "1..1", "1..1", "1..1", "1..1", ".11." }, { ".1..", "11..", ".1..", ".1..", ".1..", "111." },
+    { ".11.", "1..1", "..1.", ".1..", "1...", "1111" }, { "111.", "...1", ".11.", "...1", "...1", "111." },
+    { "1..1", "1..1", "1111", "...1", "...1", "...1" }, { "1111", "1...", "111.", "...1", "...1", "111." },
+    { ".11.", "1...", "111.", "1..1", "1..1", ".11." }, { "1111", "...1", "..1.", ".1..", ".1..", ".1.." },
+    { ".11.", "1..1", ".11.", "1..1", "1..1", ".11." }, { ".11.", "1..1", "1..1", ".111", "...1", ".11." },
+    { "1..1", "...1", "..1.", ".1..", "1...", "1..1" } };
+static const char *const SD_BATT[7] = { "1111111111..", "1.........1.", "1.FFFFFFF.11", "1.FFFFFFF.11", "1.FFFFFFF.11",
+                                        "1.........1.", "1111111111.." };
+static int sd_icon(int x, int y0, const char *const *rows, int nrows, int fill, uint32_t rgb){   /* fill: lit F columns */
+    int w = (int)strlen(rows[0]);
+    for(int r = 0; r < nrows; r++) for(int c = 0, f = 0; c < w; c++){
+        char ch = rows[r][c];
+        if(ch == 'F' && f++ >= fill) continue;
+        if(ch == '.') continue;
+        for(int y = 0; y < SD_PITCH - 1; y++) for(int xx = 0; xx < SD_PITCH - 1; xx++){
+            uint8_t *p = g_sdots_buf + ((y0 + r * SD_PITCH + y) * SD_W + x + c * SD_PITCH + xx) * 4;
+            p[0] = rgb & 255; p[1] = rgb >> 8 & 255; p[2] = rgb >> 16 & 255; p[3] = 255;
+        }
+    }
+    return w * SD_PITCH;
+}
+static void some_status(int batt, int charging, int wifi, int bt){
+    uint32_t rgb = theme_rgb(THEME_CLR_TEXT_SECONDARY);
+    memset(g_sdots_buf, 0, sizeof g_sdots_buf);
+    int x = 0;
+    if(wifi) x += sd_icon(x, 0, SD_WIFI, 7, 0, rgb) + 3 * SD_PITCH;
+    if(bt)   x += sd_icon(x, 0, SD_BT, 7, 0, rgb) + 3 * SD_PITCH;
+    if(batt >= 0) x += charging ? sd_icon(x, 0, SD_BOLT, 7, 0, rgb) : sd_icon(x, 0, SD_BATT, 7, (batt * 7 + 50) / 100, rgb);
+    else if(x) x -= 3 * SD_PITCH;
+    if(batt >= 0){                                     /* the percent: 6 rows, centred on the 7-row icons */
+        char pct[8];
+        snprintf(pct, sizeof pct, "%d", batt > 100 ? 100 : batt);
+        x += 3 * SD_PITCH;
+        for(const char *c = pct; *c; c++) x += sd_icon(x, SD_PITCH / 2, SD_DIG6[*c - '0'], 6, 0, rgb) + SD_PITCH;
+        x += sd_icon(x, SD_PITCH / 2, SD_DIG6[10], 6, 0, rgb);
+    }
+    lv_obj_invalidate(g_sdots);
+    lv_obj_set_pos(g_sdots, (360 - x) / 2, SOME_STATUS_Y);
+}
+
 void home_set_clock(const char *time_text, const char *sub_text)
 {
     /* minute-resolution text on a 10 s tick: a theme's clock drawing follows from the time text alone */
@@ -313,6 +396,7 @@ void home_set_clock(const char *time_text, const char *sub_text)
         theme_kit()->home_clock(time_text ? time_text : "--:--");
     if (ui_label_input_changed(g_clock_sub, sub_text)){
         theme_case_text(g_clock_sub, sub_text);            /* the theme's case (Default: as given) */
+        some_dateline();
     }
     if (g_mclock) mclock_set(0, time_text);
 }
@@ -321,6 +405,22 @@ void home_set_weather(const char *text)
 {
     if (!g_weather) return;
     const char *t = text ? text : "";
+    char up[128], re[128];
+    if (g_mclock) {                                          /* something: caps like the date, single spaces */
+        theme_upper(up, sizeof up, t);
+        char *o = up;
+        for (const char *c = up; *c; c++) if (*c != ' ' || (o > up && o[-1] != ' ')) *o++ = *c;
+        *o = 0;
+        t = up;
+        /* "<icon> <temp> <condition>" -> "<temp> <icon> <condition>", the condition cut to 6 characters */
+        const char *sp;
+        if ((unsigned char)up[0] == 0xEF && up[1] && up[2] && up[3] == ' ' && (sp = strchr(up + 4, ' '))) {
+            const char *c = sp + 1, *e = c;
+            for (int n = 0; *e && n < 6; n++) do e++; while ((*e & 0xC0) == 0x80);   /* whole UTF-8 characters */
+            snprintf(re, sizeof re, "%.*s %.3s %.*s", (int)(sp - (up + 4)), up + 4, up, (int)(e - c), c);
+            t = re;
+        }
+    }
     /* weather.c writes "<icon>  <temp>  <condition>". A line too narrow for all of it (a theme's side column) drops the
      * icon before it cuts the words: "5 C Overcast" reads, "5 C Over..." does not. The icon is one private-use glyph
      * (3-byte UTF-8, lead 0xEF). */
@@ -336,6 +436,7 @@ void home_set_weather(const char *text)
     }
     if (!strcmp(lv_label_get_text(g_weather), t)) return;   /* unchanged fallback: no redraw every poll */
     lv_label_set_text(g_weather, t);
+    some_dateline();
 }
 
 /* Update the top status row. batt 0-100, charging/wifi/bt are booleans. */
@@ -353,6 +454,7 @@ void home_set_status(int batt, int charging, int wifi, int bt)
      * battery glyph looked mashed. Not charging -> the battery-level glyph. */
     if (batt >= 0) p += sprintf(p, "%s %d%%", charging ? LV_SYMBOL_CHARGE : bs, batt);
     ui_label_set_changed(g_status, buf);
+    if (g_sdots) some_status(batt, charging, wifi, bt);
 }
 
 /* Fit the now-playing text in its box, whatever the theme did to the box or the fonts: the title + artist pair is
@@ -669,10 +771,24 @@ static void something_home(lv_obj_t *root, lv_obj_t *lib_pill, lv_obj_t *search_
     home_set_backdrop_enabled(0);                      /* the mockup Home is plain black: no blurred cover behind it */
     if(mclock_new(0, root, 50) == 0)
         lv_obj_add_flag(g_clock, LV_OBJ_FLAG_HIDDEN);          /* the text clock stays as the data source */
-    lv_obj_set_pos(g_clock_sub, 0, 124);
-    lv_obj_set_style_text_font(g_clock_sub, TF(DATE), 0);     /* dot-matrix face */
+    /* one dot-matrix line under the clock: the date, then the weather (some_dateline centres the pair) */
+    s_ddot = diskos_dot_22;                                    /* a step up from the 18 px DATE face */
+    s_ddot.fallback = ui_font_cjk(22);
+    s_wicon = font_weather16;
+    s_wicon.fallback = ui_font_cjk(22);
+    s_wdot = diskos_dot_22;
+    s_wdot.fallback = &s_wicon;                                /* the condition icon; Doto has the degree sign */
+    lv_obj_set_width(g_clock_sub, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_font(g_clock_sub, &s_ddot, 0);      /* dot-matrix face */
     lv_obj_set_style_text_color(g_clock_sub, TC(TEXT_SECONDARY), 0);
-    lv_obj_set_pos(g_weather, 0, 152);
+    lv_obj_set_style_text_font(g_weather, &s_wdot, 0);
+    g_ssep = make_label(root, "/", &s_ddot, TC(TEXT_MUTED));
+    lv_obj_set_style_text_align(g_weather, LV_TEXT_ALIGN_LEFT, 0);
+    /* the status row moves under that line, drawn in dots; g_status stays as the hidden data path */
+    lv_obj_add_flag(g_status, LV_OBJ_FLAG_HIDDEN);
+    g_sdots = lv_canvas_create(root);
+    lv_canvas_set_buffer(g_sdots, g_sdots_buf, SD_W, SD_H, LV_COLOR_FORMAT_ARGB8888);
+    some_dateline();
     lv_obj_add_flag(lib_pill, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(search_btn, LV_OBJ_FLAG_HIDDEN);
     /* the pill: dark capsule with a hairline, accent ring + waveform instead of the art thumb, and its play key */

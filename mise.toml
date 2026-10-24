@@ -1,0 +1,53 @@
+# mise: pins a Python that ships with Tk (python-build-standalone), so the GUI works even when the
+# system Python lacks tkinter. install.sh still owns the .venv; mise only supplies the interpreter.
+#   mise run setup               # ./install.sh  (creates .venv + installs requirements)
+#   mise run installer -- doctor # ./diskos-installer doctor
+#   mise run gui                 # ./diskos-installer gui
+#   mise run usbboot             # build vendor/linux-x86_64/usbboot (needed to flash)
+#   mise run build-ui            # build mq_ui (Docker) and replace payload/mq_ui; first run builds GCC (slow)
+#   DISKOS_IP=.. DISKOS_PW=.. mise run deploy  # push ui/mq_ui over Wi-Fi + hot-reload (Debug Mode; reverts on reboot)
+
+[tools]
+python = "3.12"
+
+[tasks.setup]
+description = "One-time setup: create .venv and install dependencies (install.sh)"
+run = "./install.sh"
+sources = ["requirements.txt", "install.sh", "mise.toml"]
+outputs = [".venv/pyvenv.cfg"]
+
+[tasks.installer]
+description = "Run the diskOS installer; pass subcommands after --"
+run = "./diskos-installer"
+depends = ["setup"]
+
+[tasks.gui]
+description = "Launch the graphical installer"
+run = "./diskos-installer gui"
+depends = ["setup"]
+
+[tasks.doctor]
+description = "Check if diskOS can be installed"
+run = "./diskos-installer doctor"
+depends = ["setup"]
+
+
+[tasks.usbboot]
+description = "Build static usbboot into vendor/linux-x86_64/ (needs gcc, make, curl)"
+run = "bash build/build-usbboot-static.sh"
+sources = ["src/usbboot/usbboot.c", "build/build-usbboot-static.sh"]
+outputs = ["vendor/linux-x86_64/usbboot"]
+
+[tasks.build-ui]
+description = "Build mq_ui in Docker (MIPS cross toolchain) and replace payload/mq_ui with it"
+dir = "ui"
+run = [
+  "docker build -t diskos-ui-builder .",
+  "docker run --rm -u \"$(id -u):$(id -g)\" -v \"$PWD:/src\" diskos-ui-builder",
+  "install -m 0755 mq_ui ../payload/mq_ui",
+  "echo '==> payload/mq_ui replaced (restore the stock one with: git checkout payload/mq_ui)'",
+]
+
+[tasks.deploy]
+description = "Push ui/mq_ui to the Disc over Wi-Fi and hot-reload it (temporary; reverts on reboot). Needs DISKOS_IP and DISKOS_PW from Debug Mode"
+run = "bash tools/diskos-deploy.sh ui/mq_ui"
